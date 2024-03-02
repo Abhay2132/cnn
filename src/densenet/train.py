@@ -2,7 +2,6 @@ import os
 import zipfile
 import matplotlib.pyplot as plt
 import numpy as np
-import pandas as pd
 import tensorflow as tf
 from tensorflow.keras.utils import image_dataset_from_directory
 from tensorflow.keras.models import Sequential
@@ -25,17 +24,11 @@ BASE_DIR = os.path.join(cwd, "datasets", "densenet")
 ZIP_FILE_NAME = "alien-vs-predator-images.zip"
 ZF_PATH = os.path.join(BASE_DIR, ZIP_FILE_NAME)
 
-"""     Downloading Dataset     """
-
 os.makedirs(BASE_DIR, exist_ok=True)
 if not os.path.exists(ZF_PATH):
     os.system("kaggle datasets download -d pmigdal/alien-vs-predator-images -p ./datasets/densenet")
-
-"""     EXTRACTING DATASET      """
-zfile = zipfile.ZipFile(ZF_PATH)
-zfile.extractall(BASE_DIR)
-
-"""     Setting variables        """
+    zfile = zipfile.ZipFile(ZF_PATH)
+    zfile.extractall(BASE_DIR)
 
 base_dir = os.path.join(BASE_DIR, "alien_vs_predator_thumbnails","data")
 train_dir = os.path.join(base_dir,'train')
@@ -44,50 +37,34 @@ validation_dir = os.path.join(base_dir,'validation')
 print(f"base_dir {os.path.isdir(base_dir)} ={base_dir}")
 print(f"train_dir {os.path.isdir(train_dir)} ={train_dir}")
 print(f"validation_dir {os.path.isdir(validation_dir)} ={validation_dir}")
-def run():
 
-    BATCH_SIZE = 8
+BATCH_SIZE = 8
+IMG_HEIGHT = 224
+IMG_WIDTH = 224
+epochs = 100
 
-    IMG_HEIGHT = 224
-    IMG_WIDTH = 224
-
-    epochs = 100
-
-    """             Training            """
-
-    """
-    Preparing Images
-    """
-
-    train_dataset = image_dataset_from_directory(train_dir,
-                                                shuffle=True,
-                                                batch_size=BATCH_SIZE,
-                                                label_mode="binary",
-                                                color_mode="rgb",
-                                                image_size=(IMG_HEIGHT,IMG_WIDTH))
-
-    validation_dataset = image_dataset_from_directory(validation_dir,
-                                                    shuffle=True,
-                                                    batch_size=BATCH_SIZE,
-                                                    label_mode="binary",
-                                                    color_mode="rgb",
-                                                    image_size=(IMG_HEIGHT,IMG_WIDTH))
-
+def loadDataSet():
+    train_dataset = image_dataset_from_directory(train_dir,shuffle=True,batch_size=BATCH_SIZE,label_mode="binary",color_mode="rgb",image_size=(IMG_HEIGHT,IMG_WIDTH))
+    validation_dataset = image_dataset_from_directory(validation_dir,shuffle=True,batch_size=BATCH_SIZE,label_mode="binary",color_mode="rgb",image_size=(IMG_HEIGHT,IMG_WIDTH))
     class_names = train_dataset.class_names
     print(class_names)
 
-    """## Visualizing"""
+    val_batches = tf.data.experimental.cardinality(validation_dataset)
+    test_dataset = validation_dataset.take(val_batches // 5)
+    validation_dataset = validation_dataset.skip(val_batches // 5)
 
-    # plt.figure(figsize=(16,9))
-    # for images, labels in train_dataset.take(1):
-    #   for i in range(BATCH_SIZE):
-    #     plt.subplot(2,4,i+1)
-    #     plt.imshow(images[i].numpy().astype("uint8"))
-    #     plt.title(class_names[int(labels[i])])
-    #     plt.axis("on")
+    print("val_batches:",val_batches)
+    print("No. of validation batches : %d" % tf.data.experimental.cardinality(validation_dataset))
+    print("No. of test batches : %d"% tf.data.experimental.cardinality(test_dataset))
 
-    """## Image Augmentation"""
+    AUTOTUNE = tf.data.experimental.AUTOTUNE
+    train_dataset = train_dataset.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
+    validation_dataset = validation_dataset.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
+    test_dataset = test_dataset.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
 
+    return (train_dataset, validation_dataset, test_dataset)
+
+def makeModel():
     data_augmentation = Sequential(
         [
             RandomFlip(input_shape=(IMG_HEIGHT,IMG_WIDTH,3), mode='horizontal'),
@@ -96,45 +73,6 @@ def run():
         ],
         name="Augmentation"
     )
-
-    data_augmentation.summary()
-
-    """## Test Dataset"""
-
-    val_batches = tf.data.experimental.cardinality(validation_dataset)
-    test_dataset = validation_dataset.take(val_batches // 5)
-    validation_dataset = validation_dataset.skip(val_batches // 5)
-
-    print("No. of validation batches : %d" % tf.data.experimental.cardinality(validation_dataset))
-    print("No. of test batches : %d"% tf.data.experimental.cardinality(test_dataset))
-
-    """## Improvements in Dataset"""
-
-    AUTOTUNE = tf.data.experimental.AUTOTUNE
-    train_dataset = train_dataset.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
-    validation_dataset = validation_dataset.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
-    test_dataset = test_dataset.cache().shuffle(1000).prefetch(buffer_size=AUTOTUNE)
-
-    """## Visualize Original and Augmented Dataset"""
-
-    # plt.figure(figsize=(16,9))
-    # for images, labels in train_dataset.take(1):
-    #   argImg = data_augmentation(images)
-    #   for i in range(int(BATCH_SIZE/2)):
-    #     plt.subplot(2,4,i+1)
-    #     plt.imshow(images[i].numpy().astype("uint8"))
-    #     plt.title("Original")
-    #     plt.axis("off")
-
-    #     plt.subplot(2,4,i+1+int(BATCH_SIZE/2))
-    #     plt.imshow(argImg[i].numpy().astype("uint8"))
-    #     plt.title("Augmented")
-    #     plt.axis("off")
-
-    """
-    DenseNet-201
-    """
-
     base_densenet_model = Sequential(
         [
             Rescaling(
@@ -151,8 +89,6 @@ def run():
     )
 
     base_densenet_model.trainable = False
-    base_densenet_model.summary()
-
     custom_densenet_model = Sequential(
         [
             base_densenet_model,
@@ -171,16 +107,12 @@ def run():
         metrics=['accuracy']
     )
 
-    """## Fit the Model"""
+    return custom_densenet_model
 
-    early = EarlyStopping(monitor="val_loss",
-                        patience=math.floor(epochs*0.1))
+def fit(custom_densenet_model, train_dataset, validation_dataset):
+    early = EarlyStopping(monitor="val_loss", patience=math.floor(epochs*0.1))
 
-    learning_rate_reduction = ReduceLROnPlateau(monitor="val_loss",
-                                                patience=2,
-                                                verbose=1,
-                                                factor=0.3,
-                                                min_lr=0.000001)
+    learning_rate_reduction = ReduceLROnPlateau(monitor="val_loss",patience=2,verbose=1,factor=0.3,min_lr=0.000001)
 
     modelcheck = ModelCheckpoint(os.path.join('saved_models','best_model.hdf5'),
                                 monitor='val_accuracy',
@@ -196,11 +128,15 @@ def run():
         verbose=1
     )
 
-    """# Evaluate"""
 
-    pd.DataFrame(custom_densenet_model.history.history).plot()
+if __name__ == "__main__":
 
-    test_accu = custom_densenet_model.evaluate(test_dataset)
+    (train_dataset, validation_dataset,test_dataset) = loadDataSet()
+    model = makeModel()
+    fit(model, train_dataset, validation_dataset)
+
+    test_accu = model.evaluate(test_dataset)
     print("Testing Accuracy = ", test_accu[1]*100,"%")
 
-run()
+    model.save("saved_models/densenet/alien-predator.keras")
+
